@@ -1,6 +1,6 @@
 using CsvHelper.Configuration.Attributes;
 
-namespace GtfsNet.OSM.Rail;
+namespace GtfsNet.OSM;
 
 public class OsmNode
 {

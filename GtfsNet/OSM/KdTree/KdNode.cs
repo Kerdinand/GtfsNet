@@ -1,5 +1,3 @@
-using GtfsNet.OSM.Rail;
-
 namespace GtfsNet.OSM.KdTree;
 
 public class KdNode

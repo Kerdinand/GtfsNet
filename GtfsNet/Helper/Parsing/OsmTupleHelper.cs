@@ -1,6 +1,6 @@
 using System;
 using GtfsNet.Enum;
-using GtfsNet.OSM.Rail;
+using GtfsNet.OSM;
 
 namespace GtfsNet.Helper.Parsing;
 

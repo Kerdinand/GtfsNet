@@ -5,7 +5,6 @@ using System.Text.RegularExpressions;
 using CsvHelper.Configuration.Attributes;
 using GtfsNet.Enum;
 using GtfsNet.Helper.Parsing;
-using GtfsNet.OSM.Rail;
 
 namespace GtfsNet.OSM.Graph;
 

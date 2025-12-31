@@ -11,5 +11,11 @@
       <PackageReference Include="OsmSharp.Geo" Version="6.2.0" />
       <PackageReference Include="QuikGraph" Version="2.5.0" />
     </ItemGroup>
+    <ItemGroup>
+      <ProjectReference Include="..\..\GtfsNet.Testing\GtfsNet.Routing\GtfsNet.Routing.csproj" />
+    </ItemGroup>
+    <ItemGroup>
+      <Folder Include="OSM\Routing\" />
+    </ItemGroup>
 
 </Project>

@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Linq;
-using GtfsNet.OSM.Rail;
 using GtfsNet.Structs;
 using KdTree;
 using KdTree.Math;
@@ -53,6 +52,21 @@ public class OsmKdTree
             .Where(n => n != null)
             .ToList();
     }
+    
+    
+    public List<OsmNode> FindNearestN(Stop stop, int k = 10)
+    {
+        double[] queryPoint = { stop.Lat, stop.Lon };
 
+        var nearest = _kdTree.GetNearestNeighbours(queryPoint, k);
+
+        if (nearest == null || nearest.Length == 0)
+            return new List<OsmNode>();
+
+        return nearest
+            .Select(n => n.Value)
+            .Where(n => n != null)
+            .ToList();
+    }
     
 }

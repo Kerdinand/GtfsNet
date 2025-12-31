@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Linq;
-using GtfsNet.OSM.Rail;
 
 namespace GtfsNet.OSM.KdTree;
 

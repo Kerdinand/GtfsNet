@@ -8,12 +8,14 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
 using CsvHelper;
 using GtfsNet.Enum;
 using GtfsNet.Helper.Parsing;
 using GtfsNet.OSM.Graph;
 using GtfsNet.OSM.KdTree;
-using GtfsNet.OSM.Rail;
+using GtfsNet.OSM.Routing.OsmStreetRouting;
+using GtfsNet.Routing.OsmStreetRouting;
 using GtfsNet.Structs;
 using NetTopologySuite.Geometries;
 using NetTopologySuite.Index.IntervalRTree;
@@ -30,12 +32,13 @@ public class OsmReader
 {
     private string _path;
     private GtfsFeed _gtfsFeed;
-
-    public OsmReader(string path, GtfsFeed feed)
+    private string osmFile = "/schleswig-holstein-251229.osm.pbf";
+    public OsmReader(string path, string osmFile, GtfsFeed feed)
     {
         Console.WriteLine($"Initializing {nameof(OsmReader)}");
         this._path = path;
         this._gtfsFeed = feed;
+        this.osmFile = osmFile;
         _routeDict = this._gtfsFeed.Route.ToDictionary(r => r.Id);
         _stopTimesDict = _gtfsFeed.StopTimesDictionary();
     }
@@ -70,13 +73,53 @@ public class OsmReader
     private Dictionary<string, List<StopTime>> _stopTimesDict;
 
     private Dictionary<string, SubLinkDto> _precomputedShapes;
+    
+    private List<Trip>? _cachedBusTrips;
+    private readonly object _busTripLock = new();
+    private Dictionary<string, Stop> _stopDict;
+
+    public List<Stop> GetStopsOfRandomBusTrip()
+    {
+        if (_cachedBusTrips == null)
+        {
+            lock (_busTripLock)
+            {
+                if (_cachedBusTrips == null)
+                {
+                    var busRouteIds = _routeDict.Values
+                        .Where(r => r.RouteType == 3)
+                        .Select(r => r.Id)
+                        .ToHashSet();
+
+                    _cachedBusTrips = _gtfsFeed.Trips
+                        .Where(t => busRouteIds.Contains(t.RouteId))
+                        .ToList();
+                }
+            }
+        }
+
+        if (_cachedBusTrips.Count == 0)
+            return new List<Stop>();
+
+        // 🎲 Pick random trip
+        var trip = _cachedBusTrips[Random.Shared.Next(_cachedBusTrips.Count)];
+
+        if (!_stopTimesDict.TryGetValue(trip.Id, out var stopTimes))
+            return new List<Stop>();
+
+        return stopTimes
+            .OrderBy(st => st.Sequence)
+            .Select(st => st.Stop)
+            .ToList();
+    }
+
 
     private void WriteWayAndAddNodesToSet(StreamWriter writer, Way way, HashSet<long> nodesToWrite,
         bool ignoreInnerNodes = false, int takeEveryNthNode = 0)
     {
         long wayId = way.Id ?? -1;
 
-        var nodes = way.Nodes;
+        var nodes = way.Nodes.Select(e => (long)e).ToArray();
         IEnumerable<long> nodesToWriteToCsv;
         int counter = 0;
         if (takeEveryNthNode > 1)
@@ -113,9 +156,19 @@ public class OsmReader
         writer.WriteLine($"{wayId},{nodeIds},\"{tags}\"");
     }
 
-    public void WriteCsv(string outputPath)
+    public Dictionary<long, OsmNode> GetOsmNodes(OsmType type)
     {
-        if (File.Exists(outputPath + "/HighwayNodes.csv"))
+        return GetNodeDictionary(type);
+    }
+
+    public Dictionary<long, OsmWay> GetOsmWays(OsmType type)
+    {
+        return GetWayDictionary(type);
+    }
+
+    public void WriteCsv(string outputPath, bool rewrite = false)
+    {
+        if (!rewrite && File.Exists(outputPath + "/HighwayNodes.csv"))
         {
             Console.WriteLine("Nodes and Ways csv already exist. Skipping writing of files.");
             return;
@@ -128,16 +181,14 @@ public class OsmReader
             "secondary", "secondary_link",
             "tertiary", "tertiary_link",
             "residential",
-            "living_street",
             "unclassified",
-            "service",
             "road",
             "busway"
         };
 
         Console.WriteLine($"Commencing writing Ways");
 
-        using (var fs = File.OpenRead(_path + "/bayern-251226.osm.pbf"))
+        using (var fs = File.OpenRead(_path + osmFile))
         using (var highwayWayWriter = new StreamWriter(outputPath + "/HighwayWays.csv"))
         using (var tramWayWriter = new StreamWriter(outputPath + "/TramWays.csv"))
         using (var railWayWriter = new StreamWriter(outputPath + "/RailWays.csv"))
@@ -157,8 +208,7 @@ public class OsmReader
                 if (way.Tags.TryGetValue("highway", out var highway) &&
                     allowedHighways.Contains(highway))
                 {
-                        WriteWayAndAddNodesToSet(highwayWayWriter, way, higwayNodes, false, 2);
-                    
+                        WriteWayAndAddNodesToSet(highwayWayWriter, way, higwayNodes, false, 1);
                 }
 
                 if (way.Tags.Contains("railway", "rail"))
@@ -184,9 +234,8 @@ public class OsmReader
         }
 
         Console.WriteLine("Finished writing ways and setting to hashsets");
-        Console.WriteLine($"Number of RaodNodes{higwayNodes.Count}");
         Console.WriteLine($"Commencing of Writing Nodes");
-        using (var fs = File.OpenRead(_path + "/bayern-251226.osm.pbf"))
+        using (var fs = File.OpenRead(_path + osmFile))
         using (var highwayNodeWriter = new StreamWriter(outputPath + "/HighwayNodes.csv"))
         using (var tramNodeWriter = new StreamWriter(outputPath + "/TramNodes.csv"))
         using (var railNodeWriter = new StreamWriter(outputPath + "/RailNodes.csv"))
@@ -204,27 +253,27 @@ public class OsmReader
             {
                 if (entry is not Node node) continue;
                 if (!(node.Id.HasValue && node.Latitude.HasValue && node.Longitude.HasValue)) continue;
-                if (higwayNodes.Contains(node.Id.Value))
+                if (higwayNodes.Contains((long)node.Id.Value))
                 {
                     highwayNodeWriter.WriteLine($"{node.Id.Value},{node.Latitude.Value},{node.Longitude.Value}");
                 }
 
-                if (tramNodes.Contains(node.Id.Value))
+                if (tramNodes.Contains((long)node.Id.Value))
                 {
                     tramNodeWriter.WriteLine($"{node.Id.Value},{node.Latitude.Value},{node.Longitude.Value}");
                 }
 
-                if (railNodes.Contains(node.Id.Value))
+                if (railNodes.Contains((long)node.Id.Value))
                 {
                     railNodeWriter.WriteLine($"{node.Id.Value},{node.Latitude.Value},{node.Longitude.Value}");
                 }
 
-                if (lightRailNodes.Contains(node.Id.Value))
+                if (lightRailNodes.Contains((long)node.Id.Value))
                 {
                     lightRailNodeWriter.WriteLine($"{node.Id.Value},{node.Latitude.Value},{node.Longitude.Value}");
                 }
 
-                if (subwayNodes.Contains(node.Id.Value))
+                if (subwayNodes.Contains((long)node.Id.Value))
                 {
                     subwayNodeWriter.WriteLine($"{node.Id.Value},{node.Latitude.Value},{node.Longitude.Value}");
                 }
@@ -234,13 +283,50 @@ public class OsmReader
         Console.WriteLine($"Finished of with writing Nodes");
     }
 
-    private void SetStopsToStopTimes()
+    public void SetStopsToStopTimes()
     {
         var stopDict = _gtfsFeed.Stops.ToDictionary(stop => stop.Id, stop => stop);
         foreach (var stopTime in _gtfsFeed.StopTimes) stopTime.Stop = stopDict[stopTime.StopId];
     }
 
-    private void SetClosestOsmNodeForGtfsNodes()
+    public void SetClosestOsmNodeForGtfsStops(List<OsmStreetNode> sourceNode, List<Stop> stops, bool force = false)
+    {
+        if (!File.Exists(_path + "/gtfs2osmroad.csv") || force)
+        {
+            Console.WriteLine("KD Tree created for sourceNodes");
+            var nodes = sourceNode.Where(n => n.Edges.Count != 0).Select(n => n.OsmNode).ToList();
+            Console.WriteLine($"Reduced possible nodes to: {nodes.Count}");
+            var sourceKDtree = new OsmKdTree(nodes);
+            foreach (var stop in stops)
+            {
+                var closestNode = sourceKDtree.FindNearest(stop);
+                if (closestNode is not null) stop.roadNode = closestNode;
+            }
+
+            using (var writer = new StreamWriter(_path + "/gtfs2osmroad.csv"))
+            {
+                writer.WriteLine("gtfsId,osmIds");
+                foreach (var stop in stops) writer.WriteLine($"{stop.Id},{stop.roadNode.Id}");
+            }
+        }
+        else
+        {
+            Console.WriteLine("Mapping Found! Skipping generation!");
+            using (var reader = new  StreamReader(_path + "/gtfs2osmroad.csv"))
+            using (var csvReader = new CsvReader(reader, CultureInfo.InvariantCulture))
+            {
+                _stopDict = _gtfsFeed.Stops.ToDictionary(stop => stop.Id, stop => stop);
+                var records = csvReader.GetRecords<RawRecord>();
+                foreach (var record in records)
+                {
+                    _stopDict[record.GtfsId].roadNode = higwayNodesDict[long.Parse(record.OsmIdsRaw)];
+                }
+            }
+        }
+        
+    }
+
+    public void SetClosestOsmNodeForGtfsNodes()
     {
         if (File.Exists(_path + "/gtfs2osm.csv"))
         {
@@ -389,11 +475,8 @@ public class OsmReader
         return osmEdges;
     }
 
-    public void SetGraphs()
+    public void ReadAndSetOsmDataFromFile()
     {
-        SetStopsToStopTimes();
-        SetClosestOsmNodeForGtfsNodes();
-
         foreach (OsmType enumValue in System.Enum.GetValues(typeof(OsmType)))
         {
             var (edgeName, nodeName) = GetFileOsmCsvFileNames(enumValue);
@@ -404,20 +487,72 @@ public class OsmReader
             SetCorrespondingNodeDictionary(enumValue, nodes);
             SetCorrespondingWayDictionary(enumValue, ways);
         }
+    }
+    
+    public void SetGraphs()
+    {
+        SetStopsToStopTimes();
+        SetClosestOsmNodeForGtfsNodes();
 
-        highwayGraph = OsmGraphFactory.BuildAdjacencyGraph(higwayNodesDict, highwayWays, OsmType.HIGHWAY, _highwayTree);
+        ReadAndSetOsmDataFromFile();
+
+        highwayGraph = OsmGraphFactory.BuildBiderectionalGraph(higwayNodesDict, highwayWays, OsmType.HIGHWAY, _highwayTree);
         Console.WriteLine($"HighwayGraph Size {highwayGraph.EdgeCount}");
-        railGraph = OsmGraphFactory.BuildAdjacencyGraph(railNodesDict, railWays, OsmType.RAIL, _railTree);
+        railGraph = OsmGraphFactory.BuildBiderectionalGraph(railNodesDict, railWays, OsmType.RAIL, _railTree);
         Console.WriteLine($"RailGraph Size {railGraph.EdgeCount}");
-        tramGraph = OsmGraphFactory.BuildAdjacencyGraph(tramNodesDict, tramWays, OsmType.TRAM, _tramTree);
+        tramGraph = OsmGraphFactory.BuildBiderectionalGraph(tramNodesDict, tramWays, OsmType.TRAM, _tramTree);
         Console.WriteLine($"TramGraph Size {tramGraph.EdgeCount}");
         lightRailGraph =
-            OsmGraphFactory.BuildAdjacencyGraph(lightRailNodesDict, lightRailWays, OsmType.LIGHTRAIL, _lightRailTree);
+            OsmGraphFactory.BuildBiderectionalGraph(lightRailNodesDict, lightRailWays, OsmType.LIGHTRAIL, _lightRailTree);
         Console.WriteLine($"LightRailGraph Size {lightRailGraph.EdgeCount}");
-        subwayGraph = OsmGraphFactory.BuildAdjacencyGraph(subwayNodesDict, subwayWays, OsmType.SUBWAY, _subwayTree);
+        subwayGraph = OsmGraphFactory.BuildBiderectionalGraph(subwayNodesDict, subwayWays, OsmType.SUBWAY, _subwayTree);
         Console.WriteLine($"SubwayGraph Size {subwayGraph.EdgeCount}");
     }
 
+    public Dictionary<string, (long Source, long Target)> GetAllBusStopPairs()
+    {
+        var result = new Dictionary<string, (long, long)>();
+        // 1. Collect bus route IDs
+        var busRouteIds = _routeDict.Values
+            .Where(r => r.RouteType == 3) // BUS
+            .Select(r => r.Id)
+            .ToHashSet();
+
+        // 2. Iterate over bus trips
+        foreach (var trip in _gtfsFeed.Trips)
+        {
+            if (!busRouteIds.Contains(trip.RouteId))
+                continue;
+
+            if (!_stopTimesDict.TryGetValue(trip.Id, out var stopTimes))
+                continue;
+
+            var orderedStops = stopTimes
+                .OrderBy(st => st.Sequence)
+                .Select(st => st.Stop.roadNode.Id)
+                .ToList();
+
+            // 3. Extract consecutive stop pairs
+            for (int i = 0; i < orderedStops.Count - 1; i++)
+            {
+                var source = orderedStops[i];
+                var target = orderedStops[i + 1];
+
+                // Stable identifier (matches your SubLinks style)
+                var key = $"{source} - {target}";
+
+                // Deduplicate across all trips
+                if (!result.ContainsKey(key))
+                {
+                    result[key] = (source, target);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    
     public List<List<OsmNode>> ComputeLines(Trip trip)
     {
         var route = _routeDict[trip.RouteId];
@@ -796,6 +931,19 @@ public class OsmReader
             OsmType.LIGHTRAIL => lightRailNodesDict,
             OsmType.TRAM => tramNodesDict,
             OsmType.HIGHWAY => higwayNodesDict,
+            _ => throw new ArgumentOutOfRangeException(nameof(osmType), osmType, "Unsupported OsmType")
+        };
+    }
+    
+    private Dictionary<long, OsmWay> GetWayDictionary(OsmType osmType)
+    {
+        return osmType switch
+        {
+            OsmType.RAIL => railWays,
+            OsmType.SUBWAY => subwayWays,
+            OsmType.LIGHTRAIL => lightRailWays,
+            OsmType.TRAM => tramWays,
+            OsmType.HIGHWAY => highwayWays,
             _ => throw new ArgumentOutOfRangeException(nameof(osmType), osmType, "Unsupported OsmType")
         };
     }

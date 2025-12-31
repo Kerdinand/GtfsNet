@@ -11,7 +11,7 @@ public class ShapePoint
     [Name("shape_pt_lon")]
     public float Lon { get;  set; }
     [Name("shape_pt_sequence")]
-    public uint Sequence { get;  set; }
+    public long Sequence { get;  set; }
     [Name("shape_dist_traveled")]
     public float DistTraveled { get;  set; }
 }

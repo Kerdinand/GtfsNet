@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using CsvHelper.Configuration.Attributes;
 using GtfsNet.Enum;
-using GtfsNet.OSM.Rail;
+using GtfsNet.OSM;
 
 namespace GtfsNet.Structs
 {
@@ -19,6 +19,7 @@ namespace GtfsNet.Structs
         [Name("stop_lon")]
         public double Lon { get; set; }
         [Name("stop_url")]
+        [Optional]
         public string Url { get; set; }
         [Name("parent_station")]
         public string ParentStation { get; set; }
@@ -36,5 +37,8 @@ namespace GtfsNet.Structs
         
         [Ignore]
         public List<(OsmType, OsmNode)> OsmNode {get; set;}
+        
+        [Ignore]
+        public OsmNode roadNode { get; set; }
     }
 }
