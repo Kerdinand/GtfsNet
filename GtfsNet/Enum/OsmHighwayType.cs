@@ -1,0 +1,6 @@
+namespace GtfsNet.Enum;
+
+public enum OsmHighwayType
+{
+    MOTORWAY, TRUNK, PRIMARY, SECONDARY, TERTIARY, UNCLASSIFIED, RESIDENTIAL, UNKNOWN
+}

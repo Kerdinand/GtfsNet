@@ -62,6 +62,7 @@ public class Dijkstra
         nodesToExplore.Enqueue(sourceNode, sourceNode.Labels[_id].Weight);
         var targetFound = false;
         OsmStreetNode previousNode = null;
+        
         while (nodesToExplore.Count > 0)
         {
             var currentSourceNode = nodesToExplore.Dequeue();
@@ -76,10 +77,11 @@ public class Dijkstra
             {
                 var newWeight = currentSourceNode.Labels[_id].Weight + edge.Weight;
                 var newDistnace = nodeDistance + edge.Distance;
-
+                var extraCost = 0d;
                 if (IsUTurn(currentSourceNode, edge.Target))
                     continue;
-
+                
+                
                 if (newDistnace > maxDistance)
                     continue;
 
@@ -91,7 +93,7 @@ public class Dijkstra
                     nodesToExplore.Enqueue(edge.Target, newWeight);
                 }
             }
-
+            
             if (_visitedNodes.Count > _graph.Nodes.Count) break;
         }
 

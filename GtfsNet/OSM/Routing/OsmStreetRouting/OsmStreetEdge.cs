@@ -10,10 +10,10 @@ public class OsmStreetEdge
     [Name("weight")]
     public double Weight { get; set; }
     public double Distance { get; set; }
-    public OsmStreetEdge(OsmStreetNode source, OsmStreetNode target,double distance, ushort speed, byte priority = 2)
+    public OsmStreetEdge(OsmStreetNode source, OsmStreetNode target,double distance, ushort speed, byte priority = 1)
     {
         Target = target;
-        Weight = (float)distance/speed;
+        Weight = distance / (speed * 10);
         Distance = distance;
     }
 }
